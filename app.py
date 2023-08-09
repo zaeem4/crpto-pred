@@ -712,85 +712,89 @@ def trade(price):
     #         f"total_c {len(true_pred_trend)} | total_w {len(false_pred_trend)} | last_correct_pred {true_pred_trend[-1]} | last_wrong_pred | {false_pred_trend[-1]} | mean_diff | {diff_sum/(len(true_pred_trend) + len(false_pred_trend))} "
     #     )
 
-
-minutes = [15, 30, 60]
-for min in minutes:
-    # reading dataset
-    actual_dataframe = (
-        pd.read_csv(
-            f"BTCUSDT-{min}min-till-07.csv",
-        )
-    ).dropna()
-
-    # getting no of days passed
-    diff = get_minutes_diff(datetime(2023, 8, 1, 00, 00, 00))
-
-    if min == 60:
-        # getting data from aug till now
-        new_data = pd.DataFrame(
-            json.loads(
-                requests.get(
-                    "https://api.binance.com/api/v3/klines",
-                    params={
-                        "symbol": "BTCUSDT",
-                        "interval": f"1h",
-                        "limit": int(diff / min),
-                    },
-                ).text
+try:
+    minutes = [15, 30, 60]
+    for min in minutes:
+        # reading dataset
+        actual_dataframe = (
+            pd.read_csv(
+                f"BTCUSDT-{min}min-till-07.csv",
             )
-        )
-    else:
-        # getting data from aug till now
-        new_data = pd.DataFrame(
-            json.loads(
-                requests.get(
-                    "https://api.binance.com/api/v3/klines",
-                    params={
-                        "symbol": "BTCUSDT",
-                        "interval": f"{min}m",
-                        "limit": int(diff / min),
-                    },
-                ).text
+        ).dropna()
+
+        # getting no of days passed
+        diff = get_minutes_diff(datetime(2023, 8, 1, 00, 00, 00))
+
+        if min == 60:
+            # getting data from aug till now
+            new_data = pd.DataFrame(
+                json.loads(
+                    requests.get(
+                        "https://api.binance.com/api/v3/klines",
+                        params={
+                            "symbol": "BTCUSDT",
+                            "interval": f"1h",
+                            "limit": int(diff / min),
+                        },
+                    ).text
+                )
             )
-        )
+        else:
+            # getting data from aug till now
+            new_data = pd.DataFrame(
+                json.loads(
+                    requests.get(
+                        "https://api.binance.com/api/v3/klines",
+                        params={
+                            "symbol": "BTCUSDT",
+                            "interval": f"{min}m",
+                            "limit": int(diff / min),
+                        },
+                    ).text
+                )
+            )
 
-    new_data.columns = [
-        "open_time",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "close_time",
-        "quote_volume",
-        "count",
-        "taker_buy_volume",
-        "taker_buy_quote_volume",
-        "ignore",
-    ]
+        new_data.columns = [
+            "open_time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time",
+            "quote_volume",
+            "count",
+            "taker_buy_volume",
+            "taker_buy_quote_volume",
+            "ignore",
+        ]
 
-    new_data = new_data.astype(float)
+        new_data = new_data.astype(float)
 
-    # combining old and ndew data
-    recent_result = pd.concat([actual_dataframe, new_data])
+        # combining old and ndew data
+        recent_result = pd.concat([actual_dataframe, new_data])
 
-    recent_result = recent_result.loc[
-        :, ~recent_result.columns.str.contains("^Unnamed")
-    ]
+        recent_result = recent_result.loc[
+            :, ~recent_result.columns.str.contains("^Unnamed")
+        ]
 
-    # saving latest data till now
-    recent_result.to_csv(f"BTCUSDT-{min}min-till-now.csv", index=False)
+        # saving latest data till now
+        recent_result.to_csv(f"BTCUSDT-{min}min-till-now.csv", index=False)
+
+except Exception as e:
+    logging.warning(e)
 
 time_diff = datetime.now().minute
+
 if time_diff < 15:
     logging.warning("Inside sleep")
-    time.sleep(16 - time)
+    time.sleep(16 - time_diff)
 elif time_diff < 30:
     logging.warning("Inside sleep")
-    time.sleep(31 - time)
+    time.sleep(31 - time_diff)
 elif time_diff < 60:
     logging.warning("Inside sleep")
-    time.sleep(61 - time)
+    time.sleep(61 - time_diff)
 
 twm.start_kline_socket(callback=trade, symbol="BTCUSDT", interval="1m")
 twm.join()
