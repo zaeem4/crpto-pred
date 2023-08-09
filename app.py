@@ -5,6 +5,7 @@ from prophet.serialize import model_from_json
 from finta import TA
 
 from datetime import datetime, timedelta
+import time
 
 import requests
 import json
@@ -43,76 +44,6 @@ def get_minutes_diff(then):
     return minutes
 
 
-minutes = [15, 30, 60]
-for min in minutes:
-    # reading dataset
-    actual_dataframe = (
-        pd.read_csv(
-            f"BTCUSDT-{min}min-till-07.csv",
-        )
-    ).dropna()
-
-    # getting no of days passed
-    diff = get_minutes_diff(datetime(2023, 8, 1, 00, 00, 00))
-
-    if min == 60:
-        # getting data from aug till now
-        new_data = pd.DataFrame(
-            json.loads(
-                requests.get(
-                    "https://api.binance.com/api/v3/klines",
-                    params={
-                        "symbol": "BTCUSDT",
-                        "interval": f"1h",
-                        "limit": int(diff / min),
-                    },
-                ).text
-            )
-        )
-    else:
-        # getting data from aug till now
-        new_data = pd.DataFrame(
-            json.loads(
-                requests.get(
-                    "https://api.binance.com/api/v3/klines",
-                    params={
-                        "symbol": "BTCUSDT",
-                        "interval": f"{min}m",
-                        "limit": int(diff / min),
-                    },
-                ).text
-            )
-        )
-
-    new_data.columns = [
-        "open_time",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "close_time",
-        "quote_volume",
-        "count",
-        "taker_buy_volume",
-        "taker_buy_quote_volume",
-        "ignore",
-    ]
-
-    new_data = new_data.astype(float)
-
-    # combining old and ndew data
-    recent_result = pd.concat([actual_dataframe, new_data])
-
-    recent_result = recent_result.loc[
-        :, ~recent_result.columns.str.contains("^Unnamed")
-    ]
-
-    # saving latest data till now
-    recent_result.to_csv(f"BTCUSDT-{min}min-till-now.csv", index=False)
-
-# global result
-
 global inventory
 inventory = []
 
@@ -121,49 +52,21 @@ result = {"15mins": {}, "30mins": {}, "60mins": {}}
 
 global last_time
 last_time = None
-# global last_time
 
-# global true_up_pred
-# true_up_pred = []
-
-# global true_down_pred
-# true_down_pred = []
-
-# global wrong_pred
-# wrong_pred = []
-
-# global start_time
-
-# global inventory
-
+global return_signal
+return_signal = False
 
 twm = ThreadedWebsocketManager()
 twm.start()
 
-
 def trade(price):
     try:
-        # global result
-        # global prev_time
-
-        # global true_up_pred
-        # global true_down_pred
-        # global wrong_pred
-
-        # global start_time
-
-        # global inventory
-
-        # now = datetime.fromisoformat(datetime.now().isoformat(timespec="minutes"))
-        # duration = now - start_time["15mins"]
-        # duration_in_s = duration.total_seconds()
-        # minutes = int(divmod(duration_in_s, 60)[0])
-
         global inventory
 
         global result
 
         global last_time
+        global return_signal
 
         global model_15_mins
         global model_30_mins
@@ -171,119 +74,148 @@ def trade(price):
 
         if last_time is not None:
             minutes = get_minutes_diff(last_time)
-            if minutes in [15,30,60]:
+            if minutes not in [0, 15, 30, 45, 60]:
+                return_signal = False
                 return
 
-        interval_15min_data = pd.DataFrame(
-            json.loads(
-                requests.get(
-                    "https://api.binance.com/api/v3/klines",
-                    params={
-                        "symbol": "BTCUSDT",
-                        "interval": "15m",
-                        "limit": 1,
-                    },
-                ).text
-            )
-        )
+            if minutes in [0, 15, 30, 45, 60] and return_signal == True:
+                return
 
-        interval_15min_data.columns = [
-            "open_time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "close_time",
-            "quote_volume",
-            "count",
-            "taker_buy_volume",
-            "taker_buy_quote_volume",
-            "ignore",
-        ]
-
-        interval_15min_data = interval_15min_data.astype(float)
-
-        actual_dataframe = (
-            pd.read_csv(
-                f"BTCUSDT-15min-till-now.csv",
-            )
-        ).dropna()
-
-        actual_dataframe = actual_dataframe.loc[
-            :, ~actual_dataframe.columns.str.contains("^Unnamed")
-        ]
-
-        recent_result = pd.concat([actual_dataframe, interval_15min_data])
-
-        recent_result = recent_result.loc[
-            :, ~recent_result.columns.str.contains("^Unnamed")
-        ]
-
-        recent_result.to_csv("BTCUSDT-15min-till-now.csv", index=False)
-
-        # calculating all factors
-        recent_result["open_time"] = pd.to_datetime(
-            recent_result["open_time"], unit="ms", utc=False
-        )
-        recent_result["Returns"] = recent_result.close.pct_change()
-        recent_result["Log Returns"] = np.log(1 + recent_result["Returns"])
-        recent_result["RSI"] = TA.RSI(recent_result)
-        recent_result["MACD"] = TA.VWAP(recent_result)
-        recent_result["SMA"] = TA.SMA(recent_result)
-        recent_result["BBANDS"] = TA.ROC(recent_result)
-        recent_result["EMA"] = TA.EMA(recent_result)
-
-        recent_result.fillna(0, inplace=True)
-
-        # getting predicted value
-        predicted_time = recent_result.iloc[-1]["open_time"] + timedelta(minutes=15)
-
-        future = pd.DataFrame()
-        future["ds"] = [predicted_time]
-
-        future["y"] = [recent_result.iloc[-1]["open"]]
-        future["high"] = [recent_result.iloc[-1]["high"]]
-        future["low"] = [recent_result.iloc[-1]["low"]]
-        future["close"] = [recent_result.iloc[-1]["close"]]
-        future["volume"] = [recent_result.iloc[-1]["volume"]]
-        future["Returns"] = [recent_result.iloc[-1]["Returns"]]
-        future["Log Returns"] = [recent_result.iloc[-1]["Log Returns"]]
-        future["BBANDS"] = [recent_result.iloc[-1]["BBANDS"]]
-        future["RSI"] = [recent_result.iloc[-1]["RSI"]]
-        future["MACD"] = [recent_result.iloc[-1]["MACD"]]
-        future["SMA"] = [recent_result.iloc[-1]["SMA"]]
-        future["EMA"] = [recent_result.iloc[-1]["EMA"]]
-
-        # forecasting the predicted value
-        forecast = model_15_mins.predict(future)
-
-        # current_time = f"{df.iloc[-1]['open_time']}"
-        # current_time = current_time[:-3]
-        current_time = datetime.fromisoformat(
-            recent_result.iloc[-1]["open_time"].isoformat(timespec="minutes")
-        )
-
-        current_time = f"{current_time}"
-
-        next_time = datetime.fromisoformat(predicted_time.isoformat(timespec="minutes"))
-        next_time = f"{next_time}"
-
-        if current_time in result["15mins"]:
-            result["15mins"][current_time]["actual"] = recent_result.iloc[-1]["open"]
+            if minutes == 60:
+                last_time = datetime.fromisoformat(
+                    datetime.now().isoformat(timespec="minutes")
+                )
+                # result = {"15mins": {}, "30mins": {}, "60mins": {}}
+                minutes = 0
         else:
-            result["15mins"][current_time] = {}
-            result["15mins"][current_time]["actual"] = recent_result.iloc[-1]["open"]
+            last_time = datetime.fromisoformat(
+                datetime.now().isoformat(timespec="minutes")
+            )
+            minutes = 0
 
-        if next_time in result["15mins"]:
-            result["15mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
-        else:
-            result["15mins"][next_time] = {}
-            result["15mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
+        return_signal = True
 
-        future = None
-        recent_result = None
-        actual_dataframe = None
+        if minutes == 0 or minutes == 15 or minutes == 30 or minutes == 45:
+            interval_15min_data = pd.DataFrame(
+                json.loads(
+                    requests.get(
+                        "https://api.binance.com/api/v3/klines",
+                        params={
+                            "symbol": "BTCUSDT",
+                            "interval": "15m",
+                            "limit": 1,
+                        },
+                    ).text
+                )
+            )
+
+            interval_15min_data.columns = [
+                "open_time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "close_time",
+                "quote_volume",
+                "count",
+                "taker_buy_volume",
+                "taker_buy_quote_volume",
+                "ignore",
+            ]
+
+            interval_15min_data = interval_15min_data.astype(float)
+
+            actual_dataframe = (
+                pd.read_csv(
+                    f"BTCUSDT-15min-till-now.csv",
+                )
+            ).dropna()
+
+            actual_dataframe = actual_dataframe.loc[
+                :, ~actual_dataframe.columns.str.contains("^Unnamed")
+            ]
+
+            recent_result = pd.concat([actual_dataframe, interval_15min_data])
+
+            recent_result = recent_result.loc[
+                :, ~recent_result.columns.str.contains("^Unnamed")
+            ]
+
+            recent_result.to_csv("BTCUSDT-15min-till-now.csv", index=False)
+
+            # calculating all factors
+            recent_result["open_time"] = pd.to_datetime(
+                recent_result["open_time"], unit="ms", utc=False
+            )
+            recent_result["Returns"] = recent_result.close.pct_change()
+            recent_result["Log Returns"] = np.log(1 + recent_result["Returns"])
+            recent_result["RSI"] = TA.RSI(recent_result)
+            recent_result["MACD"] = TA.VWAP(recent_result)
+            recent_result["SMA"] = TA.SMA(recent_result)
+            recent_result["BBANDS"] = TA.ROC(recent_result)
+            recent_result["EMA"] = TA.EMA(recent_result)
+
+            recent_result.fillna(0, inplace=True)
+
+            # getting predicted value
+            predicted_time = recent_result.iloc[-1]["open_time"] + timedelta(minutes=15)
+
+            future = pd.DataFrame()
+            future["ds"] = [predicted_time]
+
+            future["y"] = [recent_result.iloc[-1]["open"]]
+            future["high"] = [recent_result.iloc[-1]["high"]]
+            future["low"] = [recent_result.iloc[-1]["low"]]
+            future["close"] = [recent_result.iloc[-1]["close"]]
+            future["volume"] = [recent_result.iloc[-1]["volume"]]
+            future["Returns"] = [recent_result.iloc[-1]["Returns"]]
+            future["Log Returns"] = [recent_result.iloc[-1]["Log Returns"]]
+            future["BBANDS"] = [recent_result.iloc[-1]["BBANDS"]]
+            future["RSI"] = [recent_result.iloc[-1]["RSI"]]
+            future["MACD"] = [recent_result.iloc[-1]["MACD"]]
+            future["SMA"] = [recent_result.iloc[-1]["SMA"]]
+            future["EMA"] = [recent_result.iloc[-1]["EMA"]]
+
+            # forecasting the predicted value
+            forecast = model_15_mins.predict(future)
+
+            # current_time = f"{df.iloc[-1]['open_time']}"
+            # current_time = current_time[:-3]
+            current_time = datetime.fromisoformat(
+                recent_result.iloc[-1]["open_time"].isoformat(timespec="minutes")
+            )
+
+            current_time = f"{current_time}"
+
+            next_time = datetime.fromisoformat(
+                predicted_time.isoformat(timespec="minutes")
+            )
+            next_time = f"{next_time}"
+
+            if current_time in result["15mins"]:
+                result["15mins"][current_time]["actual"] = recent_result.iloc[-1][
+                    "open"
+                ]
+            else:
+                result["15mins"][current_time] = {}
+                result["15mins"][current_time]["actual"] = recent_result.iloc[-1][
+                    "open"
+                ]
+
+            if next_time in result["15mins"]:
+                result["15mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
+            else:
+                result["15mins"][next_time] = {}
+                result["15mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
+
+            future = None
+            recent_result = None
+            actual_dataframe = None
+
+            logging.warning(
+                f"Inside 15 mintes bianance current is {current_time} server current is {datetime.now()} and last time is {last_time}"
+            )
 
         # ___________________________________________________________________________________________________
         # ___________________________________________________________________________________________________
@@ -291,259 +223,261 @@ def trade(price):
         # ___________________________________________________________________________________________________
         # ___________________________________________________________________________________________________
 
-        interval_30min_data = pd.DataFrame(
-            json.loads(
-                requests.get(
-                    "https://api.binance.com/api/v3/klines",
-                    params={
-                        "symbol": "BTCUSDT",
-                        "interval": "30m",
-                        "limit": 1,
-                    },
-                ).text
+        if minutes == 0 or minutes == 30:
+            interval_30min_data = pd.DataFrame(
+                json.loads(
+                    requests.get(
+                        "https://api.binance.com/api/v3/klines",
+                        params={
+                            "symbol": "BTCUSDT",
+                            "interval": "30m",
+                            "limit": 1,
+                        },
+                    ).text
+                )
             )
-        )
 
-        interval_30min_data.columns = [
-            "open_time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "close_time",
-            "quote_volume",
-            "count",
-            "taker_buy_volume",
-            "taker_buy_quote_volume",
-            "ignore",
-        ]
+            interval_30min_data.columns = [
+                "open_time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "close_time",
+                "quote_volume",
+                "count",
+                "taker_buy_volume",
+                "taker_buy_quote_volume",
+                "ignore",
+            ]
 
-        interval_30min_data = interval_30min_data.astype(float)
+            interval_30min_data = interval_30min_data.astype(float)
 
-        actual_dataframe = (
-            pd.read_csv(
-                f"BTCUSDT-30min-till-now.csv",
+            actual_dataframe = (
+                pd.read_csv(
+                    f"BTCUSDT-30min-till-now.csv",
+                )
+            ).dropna()
+
+            actual_dataframe = actual_dataframe.loc[
+                :, ~actual_dataframe.columns.str.contains("^Unnamed")
+            ]
+
+            recent_result = pd.concat([actual_dataframe, interval_30min_data])
+
+            recent_result = recent_result.loc[
+                :, ~recent_result.columns.str.contains("^Unnamed")
+            ]
+
+            recent_result.to_csv("BTCUSDT-30min-till-now.csv", index=False)
+
+            # calculating all factors
+            recent_result["open_time"] = pd.to_datetime(
+                recent_result["open_time"], unit="ms", utc=False
             )
-        ).dropna()
+            recent_result["Returns"] = recent_result.close.pct_change()
+            recent_result["Log Returns"] = np.log(1 + recent_result["Returns"])
+            recent_result["RSI"] = TA.RSI(recent_result)
+            recent_result["MACD"] = TA.VWAP(recent_result)
+            recent_result["SMA"] = TA.SMA(recent_result)
+            recent_result["BBANDS"] = TA.ROC(recent_result)
+            recent_result["EMA"] = TA.EMA(recent_result)
 
-        actual_dataframe = actual_dataframe.loc[
-            :, ~actual_dataframe.columns.str.contains("^Unnamed")
-        ]
+            recent_result.fillna(0, inplace=True)
 
-        recent_result = pd.concat([actual_dataframe, interval_30min_data])
+            # getting predicted value
+            predicted_time = recent_result.iloc[-1]["open_time"] + timedelta(minutes=30)
 
-        recent_result = recent_result.loc[
-            :, ~recent_result.columns.str.contains("^Unnamed")
-        ]
+            future = pd.DataFrame()
+            future["ds"] = [predicted_time]
 
-        recent_result.to_csv("BTCUSDT-30min-till-now.csv", index=False)
+            future["y"] = [recent_result.iloc[-1]["open"]]
+            future["high"] = [recent_result.iloc[-1]["high"]]
+            future["low"] = [recent_result.iloc[-1]["low"]]
+            future["close"] = [recent_result.iloc[-1]["close"]]
+            future["volume"] = [recent_result.iloc[-1]["volume"]]
+            future["Returns"] = [recent_result.iloc[-1]["Returns"]]
+            future["Log Returns"] = [recent_result.iloc[-1]["Log Returns"]]
+            future["BBANDS"] = [recent_result.iloc[-1]["BBANDS"]]
+            future["RSI"] = [recent_result.iloc[-1]["RSI"]]
+            future["MACD"] = [recent_result.iloc[-1]["MACD"]]
+            future["SMA"] = [recent_result.iloc[-1]["SMA"]]
+            future["EMA"] = [recent_result.iloc[-1]["EMA"]]
 
-        # calculating all factors
-        recent_result["open_time"] = pd.to_datetime(
-            recent_result["open_time"], unit="ms", utc=False
-        )
-        recent_result["Returns"] = recent_result.close.pct_change()
-        recent_result["Log Returns"] = np.log(1 + recent_result["Returns"])
-        recent_result["RSI"] = TA.RSI(recent_result)
-        recent_result["MACD"] = TA.VWAP(recent_result)
-        recent_result["SMA"] = TA.SMA(recent_result)
-        recent_result["BBANDS"] = TA.ROC(recent_result)
-        recent_result["EMA"] = TA.EMA(recent_result)
+            # forecasting the predicted value
+            forecast = model_30_mins.predict(future)
 
-        recent_result.fillna(0, inplace=True)
+            # current_time = f"{df.iloc[-1]['open_time']}"
+            # current_time = current_time[:-3]
 
-        # getting predicted value
-        predicted_time = recent_result.iloc[-1]["open_time"] + timedelta(minutes=30)
+            current_time = datetime.fromisoformat(
+                recent_result.iloc[-1]["open_time"].isoformat(timespec="minutes")
+            )
+            current_time = f"{current_time}"
 
-        future = pd.DataFrame()
-        future["ds"] = [predicted_time]
+            next_time = datetime.fromisoformat(
+                predicted_time.isoformat(timespec="minutes")
+            )
+            next_time = f"{next_time}"
 
-        future["y"] = [recent_result.iloc[-1]["open"]]
-        future["high"] = [recent_result.iloc[-1]["high"]]
-        future["low"] = [recent_result.iloc[-1]["low"]]
-        future["close"] = [recent_result.iloc[-1]["close"]]
-        future["volume"] = [recent_result.iloc[-1]["volume"]]
-        future["Returns"] = [recent_result.iloc[-1]["Returns"]]
-        future["Log Returns"] = [recent_result.iloc[-1]["Log Returns"]]
-        future["BBANDS"] = [recent_result.iloc[-1]["BBANDS"]]
-        future["RSI"] = [recent_result.iloc[-1]["RSI"]]
-        future["MACD"] = [recent_result.iloc[-1]["MACD"]]
-        future["SMA"] = [recent_result.iloc[-1]["SMA"]]
-        future["EMA"] = [recent_result.iloc[-1]["EMA"]]
+            if current_time in result["30mins"]:
+                result["30mins"][current_time]["actual"] = recent_result.iloc[-1][
+                    "open"
+                ]
+            else:
+                result["30mins"][current_time] = {}
+                result["30mins"][current_time]["actual"] = recent_result.iloc[-1][
+                    "open"
+                ]
 
-        # forecasting the predicted value
-        forecast = model_30_mins.predict(future)
+            if next_time in result["30mins"]:
+                result["30mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
+            else:
+                result["30mins"][next_time] = {}
+                result["30mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
 
-        # current_time = f"{df.iloc[-1]['open_time']}"
-        # current_time = current_time[:-3]
+            future = None
+            recent_result = None
+            actual_dataframe = None
 
-        current_time = datetime.fromisoformat(
-            recent_result.iloc[-1]["open_time"].isoformat(timespec="minutes")
-        )
-        current_time = f"{current_time}"
-
-        next_time = datetime.fromisoformat(predicted_time.isoformat(timespec="minutes"))
-        next_time = f"{next_time}"
-
-        if current_time in result["30mins"]:
-            result["30mins"][current_time]["actual"] = recent_result.iloc[-1]["open"]
-        else:
-            result["30mins"][current_time] = {}
-            result["30mins"][current_time]["actual"] = recent_result.iloc[-1]["open"]
-
-        if next_time in result["30mins"]:
-            result["30mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
-        else:
-            result["30mins"][next_time] = {}
-            result["30mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
-
-        future = None
-        recent_result = None
-        actual_dataframe = None
-
+            logging.warning(
+                f"Inside 30 mintes bianance current is {current_time} server current is {datetime.now()} and last time is {last_time}"
+            )
         # ___________________________________________________________________________________________________
         # ___________________________________________________________________________________________________
         #                                  now 60 mins
         # ___________________________________________________________________________________________________
         # ___________________________________________________________________________________________________
 
-        interval_60min_data = pd.DataFrame(
-            json.loads(
-                requests.get(
-                    "https://api.binance.com/api/v3/klines",
-                    params={
-                        "symbol": "BTCUSDT",
-                        "interval": "1h",
-                        "limit": 1,
-                    },
-                ).text
+        if minutes == 0:
+            interval_60min_data = pd.DataFrame(
+                json.loads(
+                    requests.get(
+                        "https://api.binance.com/api/v3/klines",
+                        params={
+                            "symbol": "BTCUSDT",
+                            "interval": "1h",
+                            "limit": 1,
+                        },
+                    ).text
+                )
             )
-        )
 
-        interval_60min_data.columns = [
-            "open_time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "close_time",
-            "quote_volume",
-            "count",
-            "taker_buy_volume",
-            "taker_buy_quote_volume",
-            "ignore",
-        ]
+            interval_60min_data.columns = [
+                "open_time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "close_time",
+                "quote_volume",
+                "count",
+                "taker_buy_volume",
+                "taker_buy_quote_volume",
+                "ignore",
+            ]
 
-        interval_60min_data = interval_60min_data.astype(float)
+            interval_60min_data = interval_60min_data.astype(float)
 
-        actual_dataframe = (
-            pd.read_csv(
-                f"BTCUSDT-60min-till-now.csv",
+            actual_dataframe = (
+                pd.read_csv(
+                    f"BTCUSDT-60min-till-now.csv",
+                )
+            ).dropna()
+
+            actual_dataframe = actual_dataframe.loc[
+                :, ~actual_dataframe.columns.str.contains("^Unnamed")
+            ]
+
+            recent_result = pd.concat([actual_dataframe, interval_60min_data])
+
+            recent_result = recent_result.loc[
+                :, ~recent_result.columns.str.contains("^Unnamed")
+            ]
+
+            recent_result.to_csv("BTCUSDT-60min-till-now.csv", index=False)
+
+            # calculating all factors
+            recent_result["open_time"] = pd.to_datetime(
+                recent_result["open_time"], unit="ms", utc=False
             )
-        ).dropna()
+            recent_result["Returns"] = recent_result.close.pct_change()
+            recent_result["Log Returns"] = np.log(1 + recent_result["Returns"])
+            recent_result["RSI"] = TA.RSI(recent_result)
+            recent_result["MACD"] = TA.VWAP(recent_result)
+            recent_result["SMA"] = TA.SMA(recent_result)
+            recent_result["BBANDS"] = TA.ROC(recent_result)
+            recent_result["EMA"] = TA.EMA(recent_result)
 
-        actual_dataframe = actual_dataframe.loc[
-            :, ~actual_dataframe.columns.str.contains("^Unnamed")
-        ]
+            recent_result.fillna(0, inplace=True)
 
-        recent_result = pd.concat([actual_dataframe, interval_60min_data])
+            # getting predicted value
+            predicted_time = recent_result.iloc[-1]["open_time"] + timedelta(minutes=60)
 
-        recent_result = recent_result.loc[
-            :, ~recent_result.columns.str.contains("^Unnamed")
-        ]
+            future = pd.DataFrame()
+            future["ds"] = [predicted_time]
 
-        recent_result.to_csv("BTCUSDT-60min-till-now.csv", index=False)
+            future["y"] = [recent_result.iloc[-1]["open"]]
+            future["high"] = [recent_result.iloc[-1]["high"]]
+            future["low"] = [recent_result.iloc[-1]["low"]]
+            future["close"] = [recent_result.iloc[-1]["close"]]
+            future["volume"] = [recent_result.iloc[-1]["volume"]]
+            future["Returns"] = [recent_result.iloc[-1]["Returns"]]
+            future["Log Returns"] = [recent_result.iloc[-1]["Log Returns"]]
+            future["BBANDS"] = [recent_result.iloc[-1]["BBANDS"]]
+            future["RSI"] = [recent_result.iloc[-1]["RSI"]]
+            future["MACD"] = [recent_result.iloc[-1]["MACD"]]
+            future["SMA"] = [recent_result.iloc[-1]["SMA"]]
+            future["EMA"] = [recent_result.iloc[-1]["EMA"]]
 
-        # calculating all factors
-        recent_result["open_time"] = pd.to_datetime(
-            recent_result["open_time"], unit="ms", utc=False
-        )
-        recent_result["Returns"] = recent_result.close.pct_change()
-        recent_result["Log Returns"] = np.log(1 + recent_result["Returns"])
-        recent_result["RSI"] = TA.RSI(recent_result)
-        recent_result["MACD"] = TA.VWAP(recent_result)
-        recent_result["SMA"] = TA.SMA(recent_result)
-        recent_result["BBANDS"] = TA.ROC(recent_result)
-        recent_result["EMA"] = TA.EMA(recent_result)
+            # forecasting the predicted value
+            forecast = model_60_mins.predict(future)
 
-        recent_result.fillna(0, inplace=True)
+            # current_time = f"{df.iloc[-1]['open_time']}"
+            # current_time = current_time[:-3]
 
-        # getting predicted value
-        predicted_time = recent_result.iloc[-1]["open_time"] + timedelta(minutes=60)
+            current_time = datetime.fromisoformat(
+                recent_result.iloc[-1]["open_time"].isoformat(timespec="minutes")
+            )
+            current_time = f"{current_time}"
 
-        future = pd.DataFrame()
-        future["ds"] = [predicted_time]
+            next_time = datetime.fromisoformat(
+                predicted_time.isoformat(timespec="minutes")
+            )
+            next_time = f"{next_time}"
 
-        future["y"] = [recent_result.iloc[-1]["open"]]
-        future["high"] = [recent_result.iloc[-1]["high"]]
-        future["low"] = [recent_result.iloc[-1]["low"]]
-        future["close"] = [recent_result.iloc[-1]["close"]]
-        future["volume"] = [recent_result.iloc[-1]["volume"]]
-        future["Returns"] = [recent_result.iloc[-1]["Returns"]]
-        future["Log Returns"] = [recent_result.iloc[-1]["Log Returns"]]
-        future["BBANDS"] = [recent_result.iloc[-1]["BBANDS"]]
-        future["RSI"] = [recent_result.iloc[-1]["RSI"]]
-        future["MACD"] = [recent_result.iloc[-1]["MACD"]]
-        future["SMA"] = [recent_result.iloc[-1]["SMA"]]
-        future["EMA"] = [recent_result.iloc[-1]["EMA"]]
+            if current_time in result["60mins"]:
+                result["60mins"][current_time]["actual"] = recent_result.iloc[-1][
+                    "open"
+                ]
+            else:
+                result["60mins"][current_time] = {}
+                result["60mins"][current_time]["actual"] = recent_result.iloc[-1][
+                    "open"
+                ]
 
-        # forecasting the predicted value
-        forecast = model_60_mins.predict(future)
+            if next_time in result["60mins"]:
+                result["60mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
+            else:
+                result["60mins"][next_time] = {}
+                result["60mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
 
-        # current_time = f"{df.iloc[-1]['open_time']}"
-        # current_time = current_time[:-3]
+            future = None
+            recent_result = None
+            actual_dataframe = None
 
-        current_time = datetime.fromisoformat(
-            recent_result.iloc[-1]["open_time"].isoformat(timespec="minutes")
-        )
-        current_time = f"{current_time}"
+            logging.warning(
+                f"Inside 60 mintes bianance current is {current_time} server current is {datetime.now()} and last time is {last_time}"
+            )
+        # ___________________________________________________________________________________________________
+        # ___________________________________________________________________________________________________
+        #                                  now calculating results
+        # ___________________________________________________________________________________________________
+        # ___________________________________________________________________________________________________
 
-        next_time = datetime.fromisoformat(predicted_time.isoformat(timespec="minutes"))
-        next_time = f"{next_time}"
-
-        if current_time in result["60mins"]:
-            result["60mins"][current_time]["actual"] = recent_result.iloc[-1]["open"]
-        else:
-            result["60mins"][current_time] = {}
-            result["60mins"][current_time]["actual"] = recent_result.iloc[-1]["open"]
-
-        if next_time in result["60mins"]:
-            result["60mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
-        else:
-            result["60mins"][next_time] = {}
-            result["60mins"][next_time]["pred"] = forecast.iloc[0]["yhat"]
-
-        up_trend = 0
-        down_trend = 0
-
-        pred_15min_trend = list(result["15mins"])[-2:]
-        pred_30min_trend = list(result["30mins"])[-2:]
-        pred_60min_trend = list(result["60mins"])[-2:]
-
-        current_value_of_15min_trend = result["15mins"][pred_15min_trend[0]]["actual"]
-        next_pred_value_of_15min_trend = result["15mins"][pred_15min_trend[1]]["pred"]
-
-        if next_pred_value_of_15min_trend > current_value_of_15min_trend:
-            up_trend = up_trend + 1
-        else:
-            down_trend = down_trend + 1
-
-        current_value_of_30min_trend = result["30mins"][pred_30min_trend[0]]["actual"]
-        next_pred_value_of_30min_trend = result["30mins"][pred_30min_trend[1]]["pred"]
-
-        if next_pred_value_of_30min_trend > current_value_of_30min_trend:
-            up_trend = up_trend + 1
-        else:
-            down_trend = down_trend + 1
-        current_value_of_60min_trend = result["60mins"][pred_60min_trend[0]]["actual"]
-        next_pred_value_of_60min_trend = result["60mins"][pred_60min_trend[1]]["pred"]
-
-        if next_pred_value_of_60min_trend > current_value_of_60min_trend:
-            up_trend = up_trend + 1
-        else:
-            down_trend = down_trend + 1
+        logging.warning(f"Current period data is {result}")
 
         price = price["k"]
 
@@ -562,29 +496,80 @@ def trade(price):
             "ignore": float(price["B"]),
         }
 
-        if up_trend > 2 and len(inventory) == 0:
+        pred_15min_trend = list(result["15mins"])[-2:]
+        pred_30min_trend = list(result["30mins"])[-2:]
+        pred_60min_trend = list(result["60mins"])[-2:]
+
+        # if minutes == 0:
+        current_value_of_15min_trend = result["15mins"][pred_15min_trend[0]]["actual"]
+        next_pred_value_of_15min_trend = result["15mins"][pred_15min_trend[1]]["pred"]
+
+        if next_pred_value_of_15min_trend > current_value_of_15min_trend:
+            buy_value = 1 / new_row["open"] * 30
             inventory.append(
                 {
                     "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
-                    "open": new_row["open"],
-                    "with_tx_fee": new_row["open"] + (new_row["open"] * 0.001),
+                    "open": buy_value,
+                    "with_tx_fee": buy_value + (buy_value * 0.001),
                 }
             )
 
-            logging.warning(f"Buy at {inventory[0]}")
+            logging.warning(f"signal 'Buy' at {inventory[-1]}")
+        else:
+            for index in range(len(inventory)):
+                buy_value = inventory.pop()
+                sell_value = 1 / new_row["open"] * 30
+                sell_value_with_tx_fee = sell_value - (sell_value * 0.001)
 
-        if down_trend > 2 and len(inventory) == 1:
-            sell_at = inventory.pop()
-            actual_sell = new_row["open"] - sell_at["open"]
-            actual_with_fee = (new_row["open"] - (new_row["open"] * 0.001)) - sell_at[
-                "with_tx_fee"
-            ]
+                temp = {
+                    "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
+                    "open": sell_value,
+                    "with_tx_fee": sell_value_with_tx_fee,
+                }
 
-            logging.warning(
-                f"Sell at actual_profit: {actual_sell} , actual_profit_with_fee: {actual_with_fee}, sell_at {datetime.fromtimestamp(new_row['open_time'] / 1000)}"
-            )
+                logging.warning(f"signal 'Sell' at {temp}")
 
-        last_time = datetime.fromisoformat(datetime.now().isoformat(timespec="minutes"))
+        # if minutes == 30:
+
+        # else:
+        #     logging.warning(f"signal 'Do nothing' {result}")
+
+        # current_value_of_30min_trend = result["30mins"][pred_30min_trend[0]]["actual"]
+        # next_pred_value_of_30min_trend = result["30mins"][pred_30min_trend[1]]["pred"]
+
+        # if next_pred_value_of_30min_trend > current_value_of_30min_trend:
+        #     up_trend = up_trend + 1
+        # else:
+        #     down_trend = down_trend + 1
+        # current_value_of_60min_trend = result["60mins"][pred_60min_trend[0]]["actual"]
+        # next_pred_value_of_60min_trend = result["60mins"][pred_60min_trend[1]]["pred"]
+
+        # if next_pred_value_of_60min_trend > current_value_of_60min_trend:
+        #     up_trend = up_trend + 1
+        # else:
+        #     down_trend = down_trend + 1
+
+        # if up_trend > 2 and len(inventory) == 0:
+        #     inventory.append(
+        #         {
+        #             "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
+        #             "open": new_row["open"],
+        #             "with_tx_fee": new_row["open"] + (new_row["open"] * 0.001),
+        #         }
+        #     )
+
+        #     logging.warning(f"Buy at {inventory[0]}")
+
+        # if down_trend > 2 and len(inventory) == 1:
+        #     sell_at = inventory.pop()
+        #     actual_sell = new_row["open"] - sell_at["open"]
+        #     actual_with_fee = (new_row["open"] - (new_row["open"] * 0.001)) - sell_at[
+        #         "with_tx_fee"
+        #     ]
+
+        #     logging.warning(
+        #         f"Sell at actual_profit: {actual_sell} , actual_profit_with_fee: {actual_with_fee}, sell_at {datetime.fromtimestamp(new_row['open_time'] / 1000)}"
+        #     )
 
     except Exception as e:
         logging.warning(e)
@@ -727,6 +712,85 @@ def trade(price):
     #         f"total_c {len(true_pred_trend)} | total_w {len(false_pred_trend)} | last_correct_pred {true_pred_trend[-1]} | last_wrong_pred | {false_pred_trend[-1]} | mean_diff | {diff_sum/(len(true_pred_trend) + len(false_pred_trend))} "
     #     )
 
+
+minutes = [15, 30, 60]
+for min in minutes:
+    # reading dataset
+    actual_dataframe = (
+        pd.read_csv(
+            f"BTCUSDT-{min}min-till-07.csv",
+        )
+    ).dropna()
+
+    # getting no of days passed
+    diff = get_minutes_diff(datetime(2023, 8, 1, 00, 00, 00))
+
+    if min == 60:
+        # getting data from aug till now
+        new_data = pd.DataFrame(
+            json.loads(
+                requests.get(
+                    "https://api.binance.com/api/v3/klines",
+                    params={
+                        "symbol": "BTCUSDT",
+                        "interval": f"1h",
+                        "limit": int(diff / min),
+                    },
+                ).text
+            )
+        )
+    else:
+        # getting data from aug till now
+        new_data = pd.DataFrame(
+            json.loads(
+                requests.get(
+                    "https://api.binance.com/api/v3/klines",
+                    params={
+                        "symbol": "BTCUSDT",
+                        "interval": f"{min}m",
+                        "limit": int(diff / min),
+                    },
+                ).text
+            )
+        )
+
+    new_data.columns = [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_volume",
+        "count",
+        "taker_buy_volume",
+        "taker_buy_quote_volume",
+        "ignore",
+    ]
+
+    new_data = new_data.astype(float)
+
+    # combining old and ndew data
+    recent_result = pd.concat([actual_dataframe, new_data])
+
+    recent_result = recent_result.loc[
+        :, ~recent_result.columns.str.contains("^Unnamed")
+    ]
+
+    # saving latest data till now
+    recent_result.to_csv(f"BTCUSDT-{min}min-till-now.csv", index=False)
+
+time_diff = datetime.now().minute
+if time_diff < 15:
+    logging.warning("Inside sleep")
+    time.sleep(16 - time)
+elif time_diff < 30:
+    logging.warning("Inside sleep")
+    time.sleep(31 - time)
+elif time_diff < 60:
+    logging.warning("Inside sleep")
+    time.sleep(61 - time)
 
 twm.start_kline_socket(callback=trade, symbol="BTCUSDT", interval="1m")
 twm.join()
