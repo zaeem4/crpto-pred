@@ -56,8 +56,13 @@ last_time = None
 global return_signal
 return_signal = False
 
+
+global count
+count = (0,0)
+
 twm = ThreadedWebsocketManager()
 twm.start()
+
 
 def trade(price):
     try:
@@ -71,6 +76,8 @@ def trade(price):
         global model_15_mins
         global model_30_mins
         global model_60_mins
+
+        global count
 
         if last_time is not None:
             minutes = get_minutes_diff(last_time)
@@ -471,63 +478,165 @@ def trade(price):
             logging.warning(
                 f"Inside 60 mintes bianance current is {current_time} server current is {datetime.now()} and last time is {last_time}"
             )
+
         # ___________________________________________________________________________________________________
         # ___________________________________________________________________________________________________
         #                                  now calculating results
         # ___________________________________________________________________________________________________
         # ___________________________________________________________________________________________________
 
-        logging.warning(f"Current period data is {result}")
+        if len(result["15mins"].keys()) > 2:
+            # ___________________________________________________________________________________________________
+            # ___________________________________________________________________________________________________
+            #                                 15 mins buy/sell/hold
+            # ___________________________________________________________________________________________________
+            # ___________________________________________________________________________________________________
 
-        price = price["k"]
+            price = price["k"]
 
-        new_row = {
-            "open_time": int(price["t"]),
-            "open": float(price["o"]),
-            "high": float(price["h"]),
-            "low": float(price["l"]),
-            "close": float(price["c"]),
-            "volume": float(price["v"]),
-            "close_time": int(price["T"]),
-            "quote_volume": float(price["q"]),
-            "count": float(price["n"]),
-            "taker_buy_volume": float(price["V"]),
-            "taker_buy_quote_volume": float(price["Q"]),
-            "ignore": float(price["B"]),
-        }
+            new_row = {
+                "open_time": int(price["t"]),
+                "open": float(price["o"]),
+                "high": float(price["h"]),
+                "low": float(price["l"]),
+                "close": float(price["c"]),
+                "volume": float(price["v"]),
+                "close_time": int(price["T"]),
+                "quote_volume": float(price["q"]),
+                "count": float(price["n"]),
+                "taker_buy_volume": float(price["V"]),
+                "taker_buy_quote_volume": float(price["Q"]),
+                "ignore": float(price["B"]),
+            }
 
-        pred_15min_trend = list(result["15mins"])[-2:]
-        pred_30min_trend = list(result["30mins"])[-2:]
-        pred_60min_trend = list(result["60mins"])[-2:]
+            pred_15min_trend = list(result["15mins"])[-3:]
 
-        # if minutes == 0:
-        current_value_of_15min_trend = result["15mins"][pred_15min_trend[0]]["actual"]
-        next_pred_value_of_15min_trend = result["15mins"][pred_15min_trend[1]]["pred"]
-
-        if next_pred_value_of_15min_trend > current_value_of_15min_trend:
-            buy_value = 1 / new_row["open"] * 30
-            inventory.append(
-                {
-                    "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
-                    "open": buy_value,
-                    "with_tx_fee": buy_value + (buy_value * 0.001),
-                }
+            logging.warning(
+                f"Buying after 15 mins {list(result['15mins'].items())[-3:]} | {pred_15min_trend}"
             )
 
-            logging.warning(f"signal 'Buy' at {inventory[-1]}")
+            if (
+                "actual" in result["15mins"][pred_15min_trend[0]]
+                and "actual" in result["15mins"][pred_15min_trend[1]]
+                and "pred" in result["15mins"][pred_15min_trend[1]]
+                and "pred" in result["15mins"][pred_15min_trend[2]]
+            ):
+                prev_value_of_15min_trend = result["15mins"][pred_15min_trend[0]][
+                    "actual"
+                ]
+
+                current_value_of_15min_trend = result["15mins"][pred_15min_trend[1]][
+                    "actual"
+                ]
+
+                current_pred_value_of_15min_trend = result["15mins"][
+                    pred_15min_trend[1]
+                ]["pred"]
+
+                next_pred_value_of_15min_trend = result["15mins"][pred_15min_trend[2]][
+                    "pred"
+                ]
+
+                buy_or_sell = False
+
+                if (
+                    next_pred_value_of_15min_trend > current_value_of_15min_trend
+                    and next_pred_value_of_15min_trend
+                    > current_pred_value_of_15min_trend
+                ):
+                    buy_value = 1 / new_row["open"] * 200
+                    inventory.append(
+                        {
+                            "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
+                            "actual_open": new_row["open"],
+                            "open": buy_value,
+                            "with_tx_fee": buy_value - (buy_value * 0.001),
+                            # "time": pred_15min_trend,
+                        }
+                    )
+
+                    logging.warning(f"signal 'Buy' at {inventory[-1]}")
+                    buy_or_sell = True
+
+                if (
+                    next_pred_value_of_15min_trend < current_value_of_15min_trend
+                    or next_pred_value_of_15min_trend
+                    < current_pred_value_of_15min_trend
+                    or current_value_of_15min_trend < prev_value_of_15min_trend
+                ):
+                    sell_value = 1 / new_row["open"] * 200
+                    sell_value_with_tx_fee = sell_value - (sell_value * 0.001)
+
+                    inventory_to_remove = []
+
+                    for index in range(len(inventory)):
+                        current_inventory = inventory[index]
+
+                        profit = (
+                            sell_value_with_tx_fee - current_inventory["with_tx_fee"]
+                        )
+
+                        if profit > 0:
+                            temp = {
+                                "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
+                                "actual_open": new_row["open"],
+                                "open": sell_value,
+                                "with_tx_fee": sell_value_with_tx_fee,
+                                "profit": profit,
+                                "profit_usdt": new_row["open"] * profit,
+                            }
+
+                            inventory_to_remove.append(current_inventory)
+
+                            logging.warning(f"signal 'Sell' at {temp}")
+                            buy_or_sell = True
+
+                    inventory = [i for i in inventory if i not in inventory_to_remove]
+
+                    # buy_time = datetime.strptime(inventory[index]["open_time"], '%y-%m-%d %H:%M:%S')
+
+                    # current_time = datetime.fromtimestamp(
+                    #     new_row["open_time"] / 1000
+                    # )
+
+                    # duration = current_time - buy_time
+                    # duration_in_s = duration.total_seconds()
+                    # buy_sell_minutes_diff = int(divmod(duration_in_s, 60)[0])
+
+                    # if buy_sell_minutes_diff > 15:
+
+                if not buy_or_sell:
+                    logging.warning(
+                        f"signal 'do nothing' current_actual {current_value_of_15min_trend} current_pred {current_pred_value_of_15min_trend} next_pred {next_pred_value_of_15min_trend}"
+                    )
+            
+                prev_actual = prev_value_of_15min_trend
+                current_value = current_value_of_15min_trend
+                pred_value = current_pred_value_of_15min_trend
+
+                if current_value - prev_actual > 0 and pred_value - prev_actual > 0:
+                    count[0] = count[0] + 1
+
+                elif current_value - prev_actual < 0 and pred_value - prev_actual < 0:
+                    count[0] = count[0] + 1
+                else:
+                    count[1] = count[1] + 1
+                
+                logging.warning(
+                    f"correct {count[0]} | wrong {count[1]} | inventory {inventory} | {len(inventory)}"
+                )
+            else:
+                logging.warning(
+                    f"Data is incomplete in {result['15mins']} for {pred_15min_trend}"
+                )
+            
+            
+        # elif len(result["30mins"].keys()) > 2:
+        #     logging.warning(list(result["30mins"].items())[-3:])
+        # elif len(result["60mins"].keys()) > 2:
+        #     logging.warning(list(result["60mins"].items())[-3:])
         else:
-            for index in range(len(inventory)):
-                buy_value = inventory.pop()
-                sell_value = 1 / new_row["open"] * 30
-                sell_value_with_tx_fee = sell_value - (sell_value * 0.001)
-
-                temp = {
-                    "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
-                    "open": sell_value,
-                    "with_tx_fee": sell_value_with_tx_fee,
-                }
-
-                logging.warning(f"signal 'Sell' at {temp}")
+            logging.warning(f"waiting for complete data | {result}")
 
         # if minutes == 30:
 
@@ -572,7 +681,7 @@ def trade(price):
         #     )
 
     except Exception as e:
-        logging.warning(e)
+        logging.warning(f"Error: {e}")
     # twm.stop()
 
     # next_time = f"{predicted_time}"
@@ -712,6 +821,7 @@ def trade(price):
     #         f"total_c {len(true_pred_trend)} | total_w {len(false_pred_trend)} | last_correct_pred {true_pred_trend[-1]} | last_wrong_pred | {false_pred_trend[-1]} | mean_diff | {diff_sum/(len(true_pred_trend) + len(false_pred_trend))} "
     #     )
 
+
 try:
     minutes = [15, 30, 60]
     for min in minutes:
@@ -788,13 +898,13 @@ time_diff = datetime.now().minute
 
 if time_diff < 15:
     logging.warning("Inside sleep")
-    time.sleep(16 - time_diff)
+    time.sleep((16 - time_diff) * 60)
 elif time_diff < 30:
     logging.warning("Inside sleep")
-    time.sleep(31 - time_diff)
+    time.sleep((31 - time_diff) * 60)
 elif time_diff < 60:
     logging.warning("Inside sleep")
-    time.sleep(61 - time_diff)
+    time.sleep((61 - time_diff) * 60)
 
 twm.start_kline_socket(callback=trade, symbol="BTCUSDT", interval="1m")
 twm.join()
