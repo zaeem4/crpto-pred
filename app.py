@@ -58,7 +58,7 @@ return_signal = False
 
 
 global count
-count = (0,0)
+count = [0, 0]
 
 twm = ThreadedWebsocketManager()
 twm.start()
@@ -544,13 +544,14 @@ def trade(price):
                     and next_pred_value_of_15min_trend
                     > current_pred_value_of_15min_trend
                 ):
-                    buy_value = 1 / new_row["open"] * 200
+                    buy_value = new_row["open"] * 0.01
+
                     inventory.append(
                         {
                             "open_time": f'{datetime.fromtimestamp(new_row["open_time"] / 1000)}',
                             "actual_open": new_row["open"],
                             "open": buy_value,
-                            "with_tx_fee": buy_value - (buy_value * 0.001),
+                            "with_tx_fee": buy_value + (buy_value * 0.001),
                             # "time": pred_15min_trend,
                         }
                     )
@@ -564,7 +565,7 @@ def trade(price):
                     < current_pred_value_of_15min_trend
                     or current_value_of_15min_trend < prev_value_of_15min_trend
                 ):
-                    sell_value = 1 / new_row["open"] * 200
+                    sell_value = new_row["open"] * 0.01
                     sell_value_with_tx_fee = sell_value - (sell_value * 0.001)
 
                     inventory_to_remove = []
@@ -583,7 +584,6 @@ def trade(price):
                                 "open": sell_value,
                                 "with_tx_fee": sell_value_with_tx_fee,
                                 "profit": profit,
-                                "profit_usdt": new_row["open"] * profit,
                             }
 
                             inventory_to_remove.append(current_inventory)
@@ -609,7 +609,7 @@ def trade(price):
                     logging.warning(
                         f"signal 'do nothing' current_actual {current_value_of_15min_trend} current_pred {current_pred_value_of_15min_trend} next_pred {next_pred_value_of_15min_trend}"
                     )
-            
+
                 prev_actual = prev_value_of_15min_trend
                 current_value = current_value_of_15min_trend
                 pred_value = current_pred_value_of_15min_trend
@@ -621,7 +621,7 @@ def trade(price):
                     count[0] = count[0] + 1
                 else:
                     count[1] = count[1] + 1
-                
+
                 logging.warning(
                     f"correct {count[0]} | wrong {count[1]} | inventory {inventory} | {len(inventory)}"
                 )
@@ -629,8 +629,7 @@ def trade(price):
                 logging.warning(
                     f"Data is incomplete in {result['15mins']} for {pred_15min_trend}"
                 )
-            
-            
+
         # elif len(result["30mins"].keys()) > 2:
         #     logging.warning(list(result["30mins"].items())[-3:])
         # elif len(result["60mins"].keys()) > 2:
