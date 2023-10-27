@@ -1,4 +1,4 @@
-# crpto-pred
+# crypto prediction app
 <h2>
     Technical Support
 </h2>
